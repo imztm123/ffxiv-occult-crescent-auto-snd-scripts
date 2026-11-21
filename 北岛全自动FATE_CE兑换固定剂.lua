@@ -53,13 +53,6 @@ local function ExtractStr(seStr)
     return tostring(seStr)
 end
 
-local function CleanStr(raw)
-    if raw == nil then return "" end
-    local s = ExtractStr(raw)
-    if s == "" or s == "nil" or string.find(s, "Dalamud%.") then return "" end
-    return s:gsub("[%c]", " ")
-end
-
 local function CalcDist(x1, y1, z1, x2, y2, z2)
     if x1 == nil or x2 == nil then return 9999 end
     local dx, dy, dz = x1 - x2, y1 - y2, z1 - z2
@@ -90,8 +83,10 @@ local function GetYesnoKind()
             if not okV or val == nil then break end
             local okS, vs = pcall(function() return val.ValueString end)
             if okS and vs ~= nil then
-                local c = CleanStr(vs)
-                if c ~= "" and c ~= "nil" then buf = buf .. " " .. c end
+                local c = ExtractStr(vs):gsub("[%c]", " ")
+                if c ~= "" and c ~= "nil" and not string.find(c, "Dalamud%.") then
+                    buf = buf .. " " .. c
+                end
             end
         end
     end)
@@ -113,8 +108,6 @@ local function GetTickState()
         inCombat = false,
         isCasting = false,
         isDead = false,
-        waitingCE = false,
-        ceReason = "",
         activeFateCount = -1,
         bossFightingNearby = false,
         alivePlayersNearby = 0,
@@ -145,12 +138,6 @@ local function GetTickState()
 
         local ok2, c2 = pcall(function() return Svc.Condition[2] end)
         if ok2 and ToBool(c2) then st.isDead = true end
-
-        local ok43, c43 = pcall(function() return Svc.Condition[43] end)
-        if ok43 and ToBool(c43) then
-            st.waitingCE = true
-            st.ceReason = "副本排队中"
-        end
     end
 
     if Svc ~= nil and Svc.ClientState ~= nil then
@@ -193,26 +180,6 @@ local function GetTickState()
 
         local okHp, hp = pcall(function() return ToNum(pObj.CurrentHp) end)
         if okHp and hp ~= nil and hp <= 0 then st.isDead = true end
-
-        if not st.waitingCE then
-            pcall(function()
-                local statuses = pObj.StatusList
-                if statuses ~= nil then
-                    local len = ToNum(statuses.Length) or 0
-                    for i = 0, len - 1 do
-                        local s = statuses[i]
-                        if s ~= nil and ToNum(s.StatusId) ~= 0 then
-                            local sName = ExtractStr(s.GameData.Value.Name)
-                            if string.find(sName, "遭遇") or string.find(sName, "参战") or string.find(sName, "申请") or string.find(sName, "紧急") then
-                                st.waitingCE = true
-                                st.ceReason = "状态(" .. sName .. ")"
-                                break
-                            end
-                        end
-                    end
-                end
-            end)
-        end
     end
 
     if st.px ~= nil and Svc ~= nil and Svc.Objects ~= nil then
@@ -238,12 +205,6 @@ local function GetTickState()
                         local curHp = ToNum(obj.CurrentHp) or 0
                         local maxHp = ToNum(obj.MaxHp) or 0
                         local flagsStr = tostring(obj.StatusFlags or "")
-                        local objName = ExtractStr(obj.Name)
-
-                        if not st.waitingCE and not canTarget and not objDead and maxHp > 0 and objName ~= "" and d <= 40.0 then
-                            st.waitingCE = true
-                            st.ceReason = "场内待战首领(" .. objName .. ")"
-                        end
 
                         if canTarget and not objDead and curHp > 0 and d <= 65.0 then
                             if (maxHp > 0 and curHp < maxHp) or string.find(flagsStr, "InCombat") then
@@ -326,8 +287,6 @@ local ctx = {
     wasDead = false,
     deadSec = 0,
     noFightSec = 0,
-    announcedFight = false,
-    announcedCE = false,
     shoutedHelp = false,
     raisedByPlayer = false,
     deathX = nil, deathY = nil, deathZ = nil,
@@ -341,8 +300,6 @@ local function ResetHealthFlags()
     ctx.wasDead = false
     ctx.deadSec = 0
     ctx.noFightSec = 0
-    ctx.announcedFight = false
-    ctx.announcedCE = false
     ctx.shoutedHelp = false
     ctx.raisedByPlayer = false
     ctx.deathX, ctx.deathY, ctx.deathZ = nil, nil, nil
@@ -395,7 +352,6 @@ local function TryReturnToCamp(preX, preY, preZ)
 end
 
 local function RunCoinExchange(st)
-    yield("/echo [新月岛守望] 已挂机满 2.5 小时，关闭 BOCCHI 与 BMR AI，准备回营地兑换终极固定剂...")
     yield(BOCCHI_CMD_OFF)
     yield("/wait 0.3")
     yield(BMR_AI_OFF)
@@ -413,7 +369,6 @@ local function RunCoinExchange(st)
     end
 
     if not atCamp then
-        yield("/echo [新月岛守望] 「返回」冷却中，重新打开 BOCCHI 与 BMR AI 继续挂机，5分钟后再试...")
         ctx.farmElapsedSec = math.max(0, (EXCHANGE_INTERVAL_MIN - 5.0) * 60.0)
         yield(BMR_AI_ON)
         yield("/wait 0.3")
@@ -463,7 +418,6 @@ local function RunCoinExchange(st)
         yield(string.format("/callback ShopExchangeCurrency true 1 %d", SHOP_OTHER_TAB_INDEX))
         yield("/wait 0.8")
 
-        local bought = 0
         local noConfirmStreak = 0
         for _ = 1, MAX_BUY_ATTEMPTS do
             yield(string.format("/callback ShopExchangeCurrency true 0 %d 1", FIXATIVE_ROW_INDEX))
@@ -481,7 +435,6 @@ local function RunCoinExchange(st)
             end
 
             if gotYesno then
-                bought = bought + 1
                 noConfirmStreak = 0
             else
                 noConfirmStreak = noConfirmStreak + 1
@@ -504,14 +457,9 @@ local function RunCoinExchange(st)
             end
         end
 
-        yield("/echo [新月岛守望] 兑换完成（共确认 %d 次），重新打开 BOCCHI 与 BMR AI 并恢复防卡死检测！", bought)
-    else
-        yield("/echo [新月岛守望] 未能打开鉴定师兑换窗口，重新打开插件，5分钟后再试...")
-        ctx.farmElapsedSec = math.max(0, (EXCHANGE_INTERVAL_MIN - 5.0) * 60.0)
-    end
-
-    if openedShop then
         ctx.farmElapsedSec = 0
+    else
+        ctx.farmElapsedSec = math.max(0, (EXCHANGE_INTERVAL_MIN - 5.0) * 60.0)
     end
 
     yield("/wait 1.0")
@@ -542,7 +490,6 @@ local function StepNorthHorn(st)
         ctx.startedBocchi = true
         ResetHealthFlags()
         ctx.lastX, ctx.lastY, ctx.lastZ = st.px, st.py, st.pz
-        yield("/echo [新月岛守望] 已进北岛，开启 BMR AI 与 BOCCHI！")
         return
     end
 
@@ -553,12 +500,10 @@ local function StepNorthHorn(st)
         ctx.wasDead = true
         ctx.idleSec = 0
         ctx.restartStage = 0
-        ctx.announcedCE = false
         ctx.deadSec = ctx.deadSec + 1.0
 
         if st.uiSelectYesno and st.yesnoType == "RAISE" then
             ctx.raisedByPlayer = true
-            yield("/echo [新月岛守望] 检测到玩家救助，接受复活！")
             yield("/wait 0.5")
             yield("/callback SelectYesno true 0")
             yield("/wait 2.0")
@@ -572,10 +517,6 @@ local function StepNorthHorn(st)
 
         if st.bossFightingNearby and ctx.deadSec < MAX_DEAD_WAIT then
             ctx.noFightSec = 0
-            if not ctx.announcedFight then
-                yield("/echo [新月岛守望] 周围仍在战斗，等待结算或拉起...")
-                ctx.announcedFight = true
-            end
             yield("/wait 1.0")
         else
             ctx.noFightSec = ctx.noFightSec + 1.0
@@ -612,15 +553,13 @@ local function StepNorthHorn(st)
         and EXCHANGE_INTERVAL_MIN > 0
         and ctx.farmElapsedSec >= (EXCHANGE_INTERVAL_MIN * 60.0)
         and not st.inCombat
-        and not st.isCasting
-        and not st.waitingCE then
+        and not st.isCasting then
         RunCoinExchange(st)
         return
     end
 
     ctx.deadSec = 0
     ctx.noFightSec = 0
-    ctx.announcedFight = false
     ctx.shoutedHelp = false
     ctx.raisedByPlayer = false
     ctx.deathX, ctx.deathY, ctx.deathZ = nil, nil, nil
@@ -630,30 +569,15 @@ local function StepNorthHorn(st)
         ctx.lastX, ctx.lastY, ctx.lastZ = st.px, st.py, st.pz
     end
 
-    if st.inCombat or st.isCasting then
+    if st.inCombat or st.isCasting or moved > 1.5 then
         ctx.idleSec = 0
         ctx.restartStage = 0
-        ctx.announcedCE = false
-    elseif st.waitingCE then
-        ctx.idleSec = 0
-        ctx.restartStage = 0
-        if not ctx.announcedCE then
-            yield("/echo [新月岛守望] 检测到正在等待 CE（" .. st.ceReason .. "），暂停发呆重启...")
-            ctx.announcedCE = true
-        end
-    elseif moved > 1.5 then
-        ctx.idleSec = 0
-        ctx.restartStage = 0
-        ctx.announcedCE = false
     elseif st.activeFateCount == 0 then
         ctx.idleSec = 0
-        ctx.announcedCE = false
     else
-        ctx.announcedCE = false
         ctx.idleSec = ctx.idleSec + 1.0
 
         if ctx.restartStage == 0 and ctx.idleSec >= IDLE_STAGE1_TIMEOUT then
-            yield(string.format("/echo [新月岛守望] 发呆 %.0f 秒（第1步），原地重启插件...", ctx.idleSec))
             yield(BMR_AI_ON)
             yield("/wait 0.3")
             yield(BOCCHI_CMD_OFF)
@@ -664,7 +588,7 @@ local function StepNorthHorn(st)
             ctx.lastX, ctx.lastY, ctx.lastZ = st.px, st.py, st.pz
 
         elseif ctx.restartStage == 1 and ctx.idleSec >= IDLE_STAGE2_TIMEOUT then
-            yield(string.format("/echo [新月岛守望] 重启后 %.0f 秒仍未动（第2步），「返回」营地...", ctx.idleSec))
+            yield("/echo [新月岛守望] 防卡第二步触发，正在「返回」营地...")
             local retOk = TryReturnToCamp(st.px, st.py, st.pz)
             if retOk then
                 yield("/wait 2.0")
@@ -704,7 +628,6 @@ local function StepOutsideCamp(st)
         yield("/wait 0.3")
         yield(BMR_AI_OFF)
         ctx.stoppedOutside = true
-        yield("/echo [新月岛守望] 已离开北岛，10秒后自动找杰弗瑞重新入岛...")
     end
 
     if ctx.outsideWait < REENTER_DELAY then
@@ -751,12 +674,9 @@ local function StepOutsideCamp(st)
     end
 end
 
-yield("/echo [新月岛守望] 全自动挂机已启动...")
-
 while true do
     local ok, st = pcall(GetTickState)
     if not ok then
-        yield("/echo [脚本异常] " .. tostring(st))
         yield("/wait 2.0")
     elseif st.isLoading or st.territoryId == 0 then
         ctx.menuStep = 1
@@ -770,7 +690,6 @@ while true do
     else
         if ctx.northHornId == 0 then
             ctx.northHornId = st.territoryId
-            yield(string.format("/echo [新月岛守望] 已自动锁定北岛地图ID: %d", math.floor(ctx.northHornId)))
         end
 
         if st.territoryId == ctx.northHornId then
