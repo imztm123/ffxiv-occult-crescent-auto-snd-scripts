@@ -1,5 +1,5 @@
 -- ===== 基础配置区 =====
-local NORTH_HORN_MAP_ID = 1346   -- 填 0 表示在北岛内启动时自动记录地图ID；记下聊天框打印的数字后建议填回这里
+local NORTH_HORN_MAP_ID = 1346   -- 北岛地图ID（填 0 则在岛内启动时自动记录）
 local NPC_NAME = "杰弗瑞"      -- 岛外营地负责传送进新月岛的 NPC 名字
 local MENU_STEPS = { 0 }      -- 第一层菜单选第1项（索引0）；第二层确认弹窗同样自动选第1项“是”
 local REENTER_DELAY = 10.0    -- 被踢出岛后等待 10 秒再开始找 NPC
@@ -47,21 +47,15 @@ local function ExtractStr(seStr)
     if seStr == nil then return "" end
     if type(seStr) == "string" then return seStr end
     local ok1, t1 = pcall(function() return seStr:ExtractText() end)
-    if ok1 and t1 ~= nil and tostring(t1) ~= "" then
-        return tostring(t1)
-    end
+    if ok1 and t1 ~= nil and tostring(t1) ~= "" then return tostring(t1) end
     local ok2, t2 = pcall(function() return seStr.TextValue end)
-    if ok2 and t2 ~= nil and tostring(t2) ~= "" then
-        return tostring(t2)
-    end
+    if ok2 and t2 ~= nil and tostring(t2) ~= "" then return tostring(t2) end
     return tostring(seStr)
 end
 
 local function CalcDist(x1, y1, z1, x2, y2, z2)
     if x1 == nil or x2 == nil then return 9999 end
-    local dx = x1 - x2
-    local dy = y1 - y2
-    local dz = z1 - z2
+    local dx, dy, dz = x1 - x2, y1 - y2, z1 - z2
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
@@ -70,46 +64,141 @@ local function IsAddonOpen(addonName)
         local okA, addon = pcall(function() return Addons.GetAddon(addonName) end)
         if okA and addon ~= nil then
             local okR, rdy = pcall(function() return addon.Ready end)
-            if okR and ToBool(rdy) then
-                return true
-            end
+            if okR and ToBool(rdy) then return true end
         end
     end
     return false
 end
 
--- 安全读取窗口中所有字符串类型的 AtkValue（兼容枚举数字与边界终止，防止越界读取）
-local function ReadAddonStringsSafe(addonName, hardCap)
-    if Addons == nil or Addons.GetAddon == nil then return nil end
-    local okA, addon = pcall(function() return Addons.GetAddon(addonName) end)
-    if not okA or addon == nil then return nil end
-    local okR, rdy = pcall(function() return ToBool(addon.Ready) end)
-    if not okR or not rdy then return nil end
+-- 仅匹配真正出现紧急遭遇战倒计时/已入选时的动态提示（避免误判灰色“遭遇战”按钮）
+local CE_KEYWORDS = {
+    "紧急遭遇战",
+    "已入选",
+    "距开始还有",
+    "即将爆发",
+    "即将开始",
+    "已申请",
+    "准备中"
+}
 
-    local strs = {}
+-- 双通道安全读取 MKDInfo 面板：提取白银币数量（xxxx/9999）与紧急遭遇战状态
+local function ReadMkdPanelInfo()
+    if Addons == nil or Addons.GetAddon == nil then return nil, false, "" end
+    local okA, addon = pcall(function() return Addons.GetAddon("MKDInfo") end)
+    if not okA or addon == nil then return nil, false, "" end
+    local okR, rdy = pcall(function() return ToBool(addon.Ready) end)
+    if not okR or not rdy then return nil, false, "" end
+
+    local silverVal = nil
+    local waitingCe = false
+    local ceReason = ""
+
     pcall(function()
+        local textList = {}
+        local intList = {}
+
         local rawCount = ToNum(addon.AtkValuesCount)
-        local maxIdx = hardCap or 35
+        local maxIdx = 45
         if rawCount ~= nil then
-            if rawCount <= 0 then return end
-            maxIdx = math.min(rawCount - 1, hardCap or 45)
+            maxIdx = (rawCount <= 0) and -1 or math.min(rawCount - 1, 50)
         end
 
         for idx = 0, maxIdx do
             local okV, val = pcall(function() return addon:GetAtkValue(idx) end)
-            -- 读到 nil 说明已到达当前窗口 AtkValue 数组末尾，立刻停止避免越界
-            if not okV or val == nil then
-                break
-            end
+            if not okV or val == nil then break end
 
             local vTypeStr = tostring(val.Type or "")
             local vTypeNum = ToNum(vTypeStr)
-            -- 底层 ValueType 枚举中 0~7 为空值/布尔/整数/浮点，>=8 为各类字符串类型
-            local isStringType = (vTypeStr == "")
-                or (string.find(vTypeStr, "String") ~= nil)
-                or (vTypeNum ~= nil and vTypeNum >= 8)
+            local isStringType = (vTypeStr == "") or (string.find(vTypeStr, "String") ~= nil) or (vTypeNum ~= nil and vTypeNum >= 8)
+            local isIntType = (string.find(vTypeStr, "Int") ~= nil) or (vTypeNum == 3 or vTypeNum == 4 or vTypeNum == 5 or vTypeNum == 6)
 
             if isStringType then
+                local okS, vs = pcall(function() return val.ValueString end)
+                if okS and vs ~= nil then
+                    local clean = ExtractStr(vs):gsub("[%c]", " ")
+                    if clean ~= "" and clean ~= "nil" then
+                        table.insert(textList, clean)
+                    end
+                end
+            elseif isIntType then
+                local okI, ivRaw = pcall(function() return val.ValueInt end)
+                local iv = okI and ToNum(ivRaw) or nil
+                if iv == nil then
+                    local okU, uvRaw = pcall(function() return val.ValueUInt end)
+                    iv = okU and ToNum(uvRaw) or nil
+                end
+                if iv ~= nil then
+                    table.insert(intList, { idx = idx, val = iv })
+                    if iv >= 0 and iv <= 9999 then
+                        table.insert(textList, tostring(iv))
+                    end
+                end
+            end
+        end
+
+        if GetNodeText ~= nil then
+            for i = 1, 40 do
+                local okN, txt = pcall(function() return GetNodeText("MKDInfo", i) end)
+                if okN and txt ~= nil then
+                    local cleanNode = tostring(txt):gsub("[%c]", " ")
+                    if cleanNode ~= "" and cleanNode ~= "nil" then
+                        table.insert(textList, cleanNode)
+                    end
+                end
+            end
+        end
+
+        for _, s in ipairs(textList) do
+            if not waitingCe then
+                for _, kw in ipairs(CE_KEYWORDS) do
+                    if string.find(s, kw) then
+                        waitingCe = true
+                        ceReason = "MKDInfo:" .. kw
+                        break
+                    end
+                end
+            end
+            if silverVal == nil then
+                local curStr = string.match(s, "(%d+)%s*/%s*9999")
+                if curStr ~= nil then
+                    local n = tonumber(curStr)
+                    if n ~= nil and n >= 0 and n <= 9999 then
+                        silverVal = math.floor(n)
+                    end
+                end
+            end
+        end
+
+        if silverVal == nil and #intList >= 2 then
+            for k = 1, #intList - 1 do
+                local cur, nxt = intList[k], intList[k + 1]
+                if nxt.idx == cur.idx + 1 and nxt.val == 9999 and cur.val >= 0 and cur.val <= 9999 then
+                    silverVal = math.floor(cur.val)
+                    break
+                end
+            end
+        end
+    end)
+
+    return silverVal, waitingCe, ceReason
+end
+
+-- 区分 SelectYesno 弹窗当前是“玩家救助”还是“返回开始地点/确认换取”
+local function GetSelectYesnoType()
+    if Addons == nil or Addons.GetAddon == nil then return "UNKNOWN" end
+    local okA, addon = pcall(function() return Addons.GetAddon("SelectYesno") end)
+    if not okA or addon == nil then return "UNKNOWN" end
+    local okR, rdy = pcall(function() return ToBool(addon.Ready) end)
+    if not okR or not rdy then return "UNKNOWN" end
+
+    local strs = {}
+    pcall(function()
+        for idx = 0, 5 do
+            local okV, val = pcall(function() return addon:GetAtkValue(idx) end)
+            if not okV or val == nil then break end
+            local vTypeStr = tostring(val.Type or "")
+            local vTypeNum = ToNum(vTypeStr)
+            if (vTypeStr == "") or (string.find(vTypeStr, "String") ~= nil) or (vTypeNum ~= nil and vTypeNum >= 8) then
                 local okS, vs = pcall(function() return val.ValueString end)
                 if okS and vs ~= nil then
                     local clean = ExtractStr(vs):gsub("[%c]", " ")
@@ -120,56 +209,6 @@ local function ReadAddonStringsSafe(addonName, hardCap)
             end
         end
     end)
-
-    return strs
-end
-
-local CE_KEYWORDS = {
-    "已入选",
-    "遭遇战",
-    "距开始还有",
-    "已申请",
-    "即将开始",
-    "准备中"
-}
-
--- 一次性从 MKDInfo 面板安全提取白银币数量和 CE 等待状态
-local function ReadMkdPanelInfo()
-    local strs = ReadAddonStringsSafe("MKDInfo", 45)
-    if strs == nil then
-        return nil, false, ""
-    end
-
-    local silverVal = nil
-    local waitingCe = false
-    local ceReason = ""
-
-    for _, s in ipairs(strs) do
-        if silverVal == nil then
-            local curStr = string.match(s, "(%d+)%s*/%s*9999")
-            if curStr ~= nil then
-                silverVal = tonumber(curStr)
-            end
-        end
-
-        if not waitingCe then
-            for _, kw in ipairs(CE_KEYWORDS) do
-                if string.find(s, kw) then
-                    waitingCe = true
-                    ceReason = "MKDInfo:" .. kw
-                    break
-                end
-            end
-        end
-    end
-
-    return silverVal, waitingCe, ceReason
-end
-
--- 区分 SelectYesno 弹窗当前是“玩家救助”还是“返回开始地点/确认换取”
-local function GetSelectYesnoType()
-    local strs = ReadAddonStringsSafe("SelectYesno", 6)
-    if strs == nil then return "UNKNOWN" end
 
     local textBuf = table.concat(strs, " ")
     if string.find(textBuf, "救助") or string.find(textBuf, "接受") then
@@ -210,13 +249,10 @@ local function GetTickState()
         uiShopCurrency = false
     }
 
-    -- 1. 基础角色状态
     if Svc ~= nil and Svc.Condition ~= nil then
         local ok45, c45 = pcall(function() return Svc.Condition[45] end)
         local ok51, c51 = pcall(function() return Svc.Condition[51] end)
-        if (ok45 and ToBool(c45)) or (ok51 and ToBool(c51)) then
-            st.isLoading = true
-        end
+        if (ok45 and ToBool(c45)) or (ok51 and ToBool(c51)) then st.isLoading = true end
 
         local ok26, c26 = pcall(function() return Svc.Condition[26] end)
         if ok26 and ToBool(c26) then st.inCombat = true end
@@ -234,23 +270,16 @@ local function GetTickState()
         end
     end
 
-    -- 2. 当前地图 TerritoryType
     if Svc ~= nil and Svc.ClientState ~= nil then
         local okT, tid = pcall(function() return ToNum(Svc.ClientState.TerritoryType) end)
-        if okT and tid ~= nil then
-            st.territoryId = tid
-        end
+        if okT and tid ~= nil then st.territoryId = math.floor(tid) end
     end
 
-    -- 3. 当前地图活跃 FATE 数量
     if Svc ~= nil and Svc.Fates ~= nil then
         local okF, fCount = pcall(function() return ToNum(Svc.Fates.Count) end)
-        if okF and fCount ~= nil then
-            st.activeFateCount = fCount
-        end
+        if okF and fCount ~= nil then st.activeFateCount = math.floor(fCount) end
     end
 
-    -- 4. 导航状态
     if IPC ~= nil and IPC.vnavmesh ~= nil then
         local okR, r = pcall(function() return IPC.vnavmesh.IsReady() end)
         if okR and r ~= nil then st.navReady = ToBool(r) end
@@ -259,7 +288,6 @@ local function GetTickState()
         if okM and m ~= nil then st.isMoving = ToBool(m) end
     end
 
-    -- 5. 玩家坐标与血量
     local pObj = nil
     if Svc ~= nil and Svc.Objects ~= nil then
         local okP, obj = pcall(function() return Svc.Objects.LocalPlayer end)
@@ -275,9 +303,7 @@ local function GetTickState()
             local pos = pObj.Position
             return ToNum(pos.X), ToNum(pos.Y), ToNum(pos.Z)
         end)
-        if okPos and px ~= nil then
-            st.px, st.py, st.pz = px, py, pz
-        end
+        if okPos and px ~= nil then st.px, st.py, st.pz = px, py, pz end
 
         local okDead, deadFlag = pcall(function() return pObj.IsDead end)
         if okDead and ToBool(deadFlag) then st.isDead = true end
@@ -286,7 +312,6 @@ local function GetTickState()
         if okHp and hp ~= nil and hp <= 0 then st.isDead = true end
     end
 
-    -- 6. 扫描周围实体
     if st.px ~= nil and Svc ~= nil and Svc.Objects ~= nil then
         pcall(function()
             local objLen = ToNum(Svc.Objects.Length) or 0
@@ -328,7 +353,6 @@ local function GetTickState()
         end)
     end
 
-    -- 7. 安全读取新月岛信息面板 (MKDInfo) 的白银币数量与 CE 倒计时
     local coins, mkdCe, mkdReason = ReadMkdPanelInfo()
     st.silverCoins = coins
     if not st.waitingCE and mkdCe then
@@ -336,7 +360,6 @@ local function GetTickState()
         st.ceReason = mkdReason
     end
 
-    -- 8. 当前选中目标
     local tObj = nil
     if Svc ~= nil and Svc.Targets ~= nil then
         local okTO, obj = pcall(function() return Svc.Targets.Target end)
@@ -350,27 +373,19 @@ local function GetTickState()
     if tObj ~= nil then
         st.hasTarget = true
         local okName, nameVal = pcall(function()
-            if tObj.Name ~= nil then
-                return ExtractStr(tObj.Name)
-            end
-            return ""
+            return (tObj.Name ~= nil) and ExtractStr(tObj.Name) or ""
         end)
-        if okName and nameVal ~= nil then
-            st.targetName = tostring(nameVal)
-        end
+        if okName and nameVal ~= nil then st.targetName = tostring(nameVal) end
 
         local okTPos, tx, ty, tz = pcall(function()
             local pos = tObj.Position
             return ToNum(pos.X), ToNum(pos.Y), ToNum(pos.Z)
         end)
-        if okTPos and tx ~= nil then
-            st.tx, st.ty, st.tz = tx, ty, tz
-        end
+        if okTPos and tx ~= nil then st.tx, st.ty, st.tz = tx, ty, tz end
     end
 
     st.distToTarget = CalcDist(st.px, st.py, st.pz, st.tx, st.ty, st.tz)
 
-    -- 9. 对话与兑换商店窗口状态
     st.uiTalk = IsAddonOpen("Talk")
     st.uiSelectString = IsAddonOpen("SelectString")
     st.uiSelectIconString = IsAddonOpen("SelectIconString")
@@ -387,15 +402,12 @@ end
 local function TryIpcMoveTarget()
     local t = Svc.Targets.Target
     if t == nil then return false end
-    local res = IPC.vnavmesh.PathfindAndMoveTo(t.Position, false)
-    return res ~= nil
+    return IPC.vnavmesh.PathfindAndMoveTo(t.Position, false) ~= nil
 end
 
 local function MoveToCurrentTarget(tx, ty, tz)
     local ok, moved = pcall(TryIpcMoveTarget)
-    if ok and moved then
-        return
-    end
+    if ok and moved then return end
     yield(string.format("/vnav moveto %.2f %.2f %.2f", tx, ty, tz))
 end
 
@@ -414,7 +426,6 @@ local hasStoppedBocchiOutside = false
 local outsideWaitElapsed = 0
 local menuStepIdx = 1
 
--- 岛内防卡死与智能复活监控变量
 local idleSeconds = 0
 local restartStage = 0
 local lastCheckX, lastCheckY, lastCheckZ = nil, nil, nil
@@ -427,11 +438,10 @@ local hasShoutedHelp = false
 local wasRaisedByPlayer = false
 local deathX, deathY, deathZ = nil, nil, nil
 
--- 白银币自动兑换状态变量
 local lastLoggedCoins = nil
 local exchangeRetryCooldown = 0
 
-yield("/echo [新月岛守望] 内存安全加固版全自动挂机已启动...")
+yield("/echo [新月岛守望] 最终版全自动挂机已启动...")
 
 while true do
     local ok, st = pcall(GetTickState)
@@ -448,14 +458,12 @@ while true do
         end
         yield("/wait 1.0")
     else
-        -- 首次在岛内启动时自动锁定北岛地图ID
         if targetNorthHornId == 0 then
             targetNorthHornId = st.territoryId
-            yield(string.format("/echo [新月岛守望] 已自动锁定北岛地图ID: %d（建议填回脚本顶部配置区）", targetNorthHornId))
+            yield(string.format("/echo [新月岛守望] 已自动锁定北岛地图ID: %d", math.floor(targetNorthHornId)))
         end
 
         if st.territoryId == targetNorthHornId then
-            -- ===== 情况A：当前处于新月岛北岛内 =====
             outsideWaitElapsed = 0
             hasStoppedBocchiOutside = false
             menuStepIdx = 1
@@ -466,7 +474,7 @@ while true do
 
             if st.silverCoins ~= nil and (lastLoggedCoins == nil or math.abs(st.silverCoins - lastLoggedCoins) >= 600) then
                 lastLoggedCoins = st.silverCoins
-                yield(string.format("/echo [新月岛守望] 当前十二城邦白银币: %d / 9999", st.silverCoins))
+                yield(string.format("/echo [新月岛守望] 当前十二城邦白银币: %d / 9999", math.floor(st.silverCoins)))
             end
 
             if not hasStartedBocchi then
@@ -486,9 +494,13 @@ while true do
                 idleSeconds = 0
                 restartStage = 0
                 lastCheckX, lastCheckY, lastCheckZ = st.px, st.py, st.pz
-                yield("/echo [新月岛守望] 已进入新月岛北岛，自动开启 BMR AI 与 BOCCHI！")
+                if st.silverCoins ~= nil then
+                    lastLoggedCoins = st.silverCoins
+                    yield(string.format("/echo [新月岛守望] 已进入新月岛北岛（当前白银币 %d/9999），自动开启 BMR AI 与 BOCCHI！", math.floor(st.silverCoins)))
+                else
+                    yield("/echo [新月岛守望] 已进入新月岛北岛，自动开启 BMR AI 与 BOCCHI！")
+                end
             elseif st.isDead then
-                -- ===== 阵亡智能决策分支 =====
                 if not wasDead then
                     deathX, deathY, deathZ = st.px, st.py, st.pz
                 end
@@ -536,7 +548,6 @@ while true do
                 end
 
             elseif wasDead then
-                -- ===== 刚复活站稳后的处理 =====
                 local revivedInPlace = (deathX ~= nil and st.px ~= nil and CalcDist(st.px, st.py, st.pz, deathX, deathY, deathZ) < 25.0)
                 local shouldSayThanks = wasRaisedByPlayer or revivedInPlace
 
@@ -578,15 +589,13 @@ while true do
                 and not st.isCasting
                 and not st.waitingCE then
 
-                -- ===== 白银币达到 8000 以上：自动回营地找调查队的古钱鉴定师兑换终极固定剂 =====
-                yield(string.format("/echo [新月岛守望] 检测到十二城邦白银币已达 %d，暂停挂机回营地兑换终极固定剂...", st.silverCoins))
+                yield(string.format("/echo [新月岛守望] 检测到十二城邦白银币已达 %d，暂停挂机回营地兑换终极固定剂...", math.floor(st.silverCoins)))
                 yield(BOCCHI_CMD_OFF)
                 yield("/wait 0.3")
                 yield(BMR_AI_OFF)
                 StopNav()
                 yield("/wait 0.5")
 
-                -- 步骤 1：判断是否已在营地范围内，否则读条「返回」
                 local atCamp = false
                 yield("/target " .. APPRAISER_NAME)
                 yield("/wait 0.4")
@@ -640,7 +649,6 @@ while true do
                     restartStage = 0
                     lastCheckX, lastCheckY, lastCheckZ = st.px, st.py, st.pz
                 else
-                    -- 步骤 2：vnav 导航至“调查队的古钱鉴定师”并打开货币交易窗口
                     yield("/wait 1.5")
                     local openedShop = false
                     local clickedSubmenu = false
@@ -683,7 +691,6 @@ while true do
                         end
                     end
 
-                    -- 步骤 3：切换到顶部第4个标签“其他”(操作码 1 3)，购买第14行“终极固定剂”(索引13)，并轮询点击确认弹窗的“是”
                     if openedShop then
                         yield("/wait 0.4")
                         yield(string.format("/callback ShopExchangeCurrency true 1 %d", SHOP_OTHER_TAB_INDEX))
@@ -741,7 +748,7 @@ while true do
                         local okEnd, stEnd = pcall(GetTickState)
                         local remainCoins = (okEnd and stEnd.silverCoins) or 0
                         lastLoggedCoins = remainCoins
-                        yield(string.format("/echo [新月岛守望] 本次共兑换 %d 个终极固定剂，当前剩余白银币 %d，恢复挂机！", boughtCount, remainCoins))
+                        yield(string.format("/echo [新月岛守望] 本次共兑换 %d 个终极固定剂，当前剩余白银币 %d，恢复挂机！", boughtCount, math.floor(remainCoins)))
                     else
                         yield("/echo [新月岛守望] 未能打开鉴定师兑换窗口，60秒后重试并先恢复挂机...")
                         exchangeRetryCooldown = 60.0
@@ -757,7 +764,6 @@ while true do
                 end
 
             else
-                -- ===== 正常存活状态下的两段式健康检查（1秒巡检一次） =====
                 deadTotalElapsed = 0
                 noFightAfterDeathElapsed = 0
                 announcedWaitingFight = false
@@ -880,7 +886,6 @@ while true do
             end
 
         else
-            -- ===== 情况B：确认已离开北岛（身处岛外营地） =====
             hasStartedBocchi = false
             wasDead = false
             deadTotalElapsed = 0
