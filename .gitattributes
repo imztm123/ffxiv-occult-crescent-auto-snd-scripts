@@ -1,0 +1,4 @@
+# 统一换行，避免脚本被转成 CRLF 后粘进 SND 出现多余 ^M
+* text=auto eol=lf
+*.lua text eol=lf
+*.md text eol=lf
