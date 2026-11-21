@@ -15,8 +15,8 @@ local SHOP_OTHER_TAB_INDEX = 3             -- 顶部第4个标签：其他
 local FIXATIVE_ROW_INDEX = 13              -- “其他”列表第14行：终极固定剂
 
 -- ===== 防卡死与阵亡配置区 =====
-local IDLE_STAGE1_TIMEOUT = 20.0  -- 第1步：发呆满 20 秒触发原地重启
-local IDLE_STAGE2_TIMEOUT = 8.0   -- 第2步：原地重启后过 8 秒仍未移动，触发「返回」回营地再重开
+local IDLE_STAGE1_TIMEOUT = 40.0  -- 第1步：发呆满 40 秒触发原地重启
+local IDLE_STAGE2_TIMEOUT = 5.0   -- 第2步：原地重启后过 5 秒仍未移动，触发「返回」回营地再重开
 
 local POST_FIGHT_RAISE_WAIT = 8.0 -- 周围战斗结束后，若有活人再多等几秒看是否有人拉复活
 local EMPTY_FIELD_WAIT = 3.0      -- 周围既没战斗也没活人时，等几秒直接回出生点
