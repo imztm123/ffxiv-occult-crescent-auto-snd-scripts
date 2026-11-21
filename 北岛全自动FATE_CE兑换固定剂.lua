@@ -78,7 +78,7 @@ local function IsAddonOpen(addonName)
     return false
 end
 
--- 安全读取窗口中所有字符串类型的 AtkValue（严格校验类型与边界，防止非托管内存越界崩溃）
+-- 安全读取窗口中所有字符串类型的 AtkValue（兼容枚举数字与边界终止，防止越界读取）
 local function ReadAddonStringsSafe(addonName, hardCap)
     if Addons == nil or Addons.GetAddon == nil then return nil end
     local okA, addon = pcall(function() return Addons.GetAddon(addonName) end)
@@ -89,24 +89,32 @@ local function ReadAddonStringsSafe(addonName, hardCap)
     local strs = {}
     pcall(function()
         local rawCount = ToNum(addon.AtkValuesCount)
-        local maxIdx = hardCap or 25
+        local maxIdx = hardCap or 35
         if rawCount ~= nil then
             if rawCount <= 0 then return end
-            maxIdx = math.min(rawCount - 1, hardCap or 40)
+            maxIdx = math.min(rawCount - 1, hardCap or 45)
         end
 
         for idx = 0, maxIdx do
             local okV, val = pcall(function() return addon:GetAtkValue(idx) end)
-            if okV and val ~= nil then
-                local vType = tostring(val.Type or "")
-                -- 仅当底层类型明确包含 String 时才读取 ValueString，避免把整数当指针解引用导致崩溃
-                if string.find(vType, "String") then
-                    local okS, vs = pcall(function() return val.ValueString end)
-                    if okS and vs ~= nil then
-                        local clean = ExtractStr(vs):gsub("[%c]", " ")
-                        if clean ~= "" and clean ~= "nil" then
-                            table.insert(strs, clean)
-                        end
+            -- 读到 nil 说明已到达当前窗口 AtkValue 数组末尾，立刻停止避免越界
+            if not okV or val == nil then
+                break
+            end
+
+            local vTypeStr = tostring(val.Type or "")
+            local vTypeNum = ToNum(vTypeStr)
+            -- 底层 ValueType 枚举中 0~7 为空值/布尔/整数/浮点，>=8 为各类字符串类型
+            local isStringType = (vTypeStr == "")
+                or (string.find(vTypeStr, "String") ~= nil)
+                or (vTypeNum ~= nil and vTypeNum >= 8)
+
+            if isStringType then
+                local okS, vs = pcall(function() return val.ValueString end)
+                if okS and vs ~= nil then
+                    local clean = ExtractStr(vs):gsub("[%c]", " ")
+                    if clean ~= "" and clean ~= "nil" then
+                        table.insert(strs, clean)
                     end
                 end
             end
@@ -127,7 +135,7 @@ local CE_KEYWORDS = {
 
 -- 一次性从 MKDInfo 面板安全提取白银币数量和 CE 等待状态
 local function ReadMkdPanelInfo()
-    local strs = ReadAddonStringsSafe("MKDInfo", 35)
+    local strs = ReadAddonStringsSafe("MKDInfo", 45)
     if strs == nil then
         return nil, false, ""
     end
@@ -160,7 +168,7 @@ end
 
 -- 区分 SelectYesno 弹窗当前是“玩家救助”还是“返回开始地点/确认换取”
 local function GetSelectYesnoType()
-    local strs = ReadAddonStringsSafe("SelectYesno", 5)
+    local strs = ReadAddonStringsSafe("SelectYesno", 6)
     if strs == nil then return "UNKNOWN" end
 
     local textBuf = table.concat(strs, " ")
