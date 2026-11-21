@@ -1,11 +1,14 @@
-# 新月岛 / 南岛 全自动挂机脚本合集
+# FFXIV Occult Crescent 自动化 SND 脚本合集（蜃景幻界新月岛）
 
-本仓库收录 FF14「新月岛」与「南岛」的两份 SND（SomethingNeedDoing）Lua 脚本，均为纯 Lua 代码，可直接粘贴进 SND 运行：
+本仓库收录 FF14「蜃景幻界新月岛」（英文 **Occult Crescent**，日文 蜃気楼の島 クレセントアイル）两份 SND（SomethingNeedDoing）Lua 脚本，均为纯 Lua 代码，可直接粘贴进 SND 运行：
+
+* **北岛** = [The Occult Crescent: North Horn](https://ffxiv.consolegameswiki.com/wiki/The_Occult_Crescent:_North_Horn)（日服 北征編 / 国服 北征之章）
+* **南岛** = [The Occult Crescent: South Horn](https://ffxiv.consolegameswiki.com/wiki/The_Occult_Crescent:_South_Horn)（日服 南征編 / 国服 南征之章）
 
 | 脚本文件 | 用途 | 说明 |
 | --- | --- | --- |
-| [`北岛全自动FATE_CE兑换固定剂.lua`](./北岛全自动FATE_CE兑换固定剂.lua) | 自动无限重返北岛，刷 FATE / CE，白银币满 8000 自动回营地兑换终极固定剂 | 依赖 BOCCHI、vnavmesh、BossMod（BMR AI） |
-| [`南岛22级怪群刷金币.lua`](./南岛22级怪群刷金币.lua) | 在南岛 22 级怪群附近定点刷怪刷金币 | 依赖 vnavmesh（寻路）与战斗插件（走位） |
+| [`北岛全自动FATE_CE兑换固定剂.lua`](./北岛全自动FATE_CE兑换固定剂.lua) | 自动无限重返 North Horn（北岛），刷 FATE / Critical Encounter（CE），白银币满 8000 自动回营地兑换终极固定剂 | 依赖 BOCCHI、vnavmesh、BossMod（BMR AI） |
+| [`南岛22级怪群刷金币.lua`](./南岛22级怪群刷金币.lua) | 在 South Horn（南岛）22 级怪群附近定点刷怪刷金币 | 依赖 vnavmesh（寻路）与战斗插件（走位） |
 
 > **不用下载文件**：直接在 GitHub 网页上点开对应的 `.lua` 文件，点代码区右上角的**复制按钮（Copy raw file）**把代码整段复制走，粘进 SND 并把 `Type` 选成 `Lua` 即可运行。文件本身就是纯代码，首尾没有 markdown 代码围栏，复制到的是干净代码，不需要手动删任何东西。
 
