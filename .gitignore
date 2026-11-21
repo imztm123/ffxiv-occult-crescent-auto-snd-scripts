@@ -30,6 +30,6 @@ tmp/
 .env
 .env.local
 
-# Obsidian 会同步出与 .lua 内容相同的 .md 副本
+# 供 Obsidian 阅读的 .md 副本（内容与同名 .lua 完全一致，只留在本地，不进仓库）
 北岛全自动FATE_CE兑换固定剂.md
 南岛22级怪群刷金币.md
