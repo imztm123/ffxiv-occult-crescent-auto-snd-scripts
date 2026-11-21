@@ -29,3 +29,7 @@ tmp/
 # 本地环境
 .env
 .env.local
+
+# Obsidian 会同步出与 .lua 内容相同的 .md 副本
+北岛全自动FATE_CE兑换固定剂.md
+南岛22级怪群刷金币.md
